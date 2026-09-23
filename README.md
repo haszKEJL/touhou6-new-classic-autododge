@@ -19,6 +19,8 @@ Download the Windows x64 ZIP from [Releases](https://github.com/haszKEJL/scarlet
 | F8 | Auto dodge |
 | F9 | Disable all features |
 
+<img width="758" height="657" alt="touhou" src="https://github.com/user-attachments/assets/59bcdd46-885f-4be5-992c-ba85ca98660e" />
+
 All features start off. For dodge on Shift, choose **Hold**, bind Shift and enable **Armed**. Only physical key presses activate hold bindings.
 
 Opening the panel pauses automation, not the game. Pause the stage first if you need time to change settings. Restart the game when updating the DLL.
