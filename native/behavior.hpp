@@ -131,6 +131,11 @@ struct BombControl {
         return false;
     }
 };
+inline bool bombEligible(bool playing,bool featureEnabled,unsigned playerState,
+                         bool bombActive,bool dialogue,int grace) {
+    // The game decides whether stock is available when it receives X.
+    return playing && featureEnabled && playerState==0 && !bombActive && !dialogue && grace>0;
+}
 // Ascend only through a conservatively clear corridor. Re-evaluate each tick
 // so newly spawned threats immediately cancel the sweep.
 inline bool collectionCorridor(Vec p,const std::vector<Bullet>& threats,const std::vector<Laser>& lasers={}) {

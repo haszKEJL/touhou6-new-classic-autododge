@@ -1,4 +1,4 @@
-Scarlet Assist 1.4.1
+Scarlet Assist 1.5.0
 Author: haszKEJL
 
 1. Extract the full ZIP.
@@ -8,16 +8,18 @@ Author: haszKEJL
 
 F5 autoplay / F6 autobomb / F7 collection / F8 dodge / F9 disable all.
 All features start OFF. Each supports custom keys and Toggle/Hold mode.
+Autobomb attempts X when no safe escape is predicted. The game handles bomb stock.
 For dodge on Shift: select Hold, assign Shift, enable Armed, close the panel.
 The panel pauses automation, NOT the game. Pause a stage before editing settings.
 Restart the game after replacing the DLL.
 
-Only New Classic 1.03 x64 with this executable SHA-256 is supported:
-07850c8c6e469c0e82c13423e6d0d096a88d693455bdacacbb44c0aa3bcce473
+New Classic x64 is supported through verified layouts or unique code signatures.
+If an update changes or duplicates a required signature, the launcher stops safely
+and that build needs validation. The original 2002 game is not supported.
 Use default game controls and the same privilege level for game and launcher.
 Extra-stage strategies are experimental; hits and failed runs are possible.
 
-Source: https://github.com/haszKEJL/scarlet-assist
+Source: https://github.com/haszKEJL/touhou6-new-classic-autododge
 Built with C++20, Win32, DirectX 11, Dear ImGui and MinHook.
 Dependency licenses are included in licenses/.
 Settings: %LOCALAPPDATA%\TouhouAssist\settings.ini

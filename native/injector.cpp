@@ -9,8 +9,8 @@ uintptr_t remoteModule(DWORD pid,const wchar_t* name) {
 int main() {
     try {
         DWORD pid=findGame(); if(!pid) throw std::runtime_error("Uruchom th06nc.exe, a nastepnie ponownie run.bat.");
-        Game validation(pid);
         if(remoteModule(pid,L"scarlet_assist.dll")) { std::cout<<"Panel jest juz zaladowany. W grze nacisnij Insert.\n"; return 0; }
+        Game validation(pid);
         wchar_t ownPath[32768]{}; GetModuleFileNameW(nullptr,ownPath,32768);
         auto dll=std::filesystem::path(ownPath).parent_path()/L"scarlet_assist.dll";
         if(!std::filesystem::is_regular_file(dll)) throw std::runtime_error("Brak scarlet_assist.dll obok launchera.");

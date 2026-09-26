@@ -35,6 +35,9 @@ struct Handle {
     Handle& operator=(const Handle&) = delete;
 };
 
+#include "game_layout.hpp"
+#include "layout_tests.hpp"
+
 std::string hashFile(const std::filesystem::path& path) {
     std::ifstream input(path, std::ios::binary);
     if (!input) throw std::runtime_error("Cannot open game executable for version check.");
@@ -79,27 +82,40 @@ struct Game {
     DWORD pid;
     Handle process;
     uintptr_t base = 0;
+    size_t imageSize=0;
+    GameLayout layout{};
+    std::string profileName;
     explicit Game(DWORD id) : pid(id), process(OpenProcess(PROCESS_VM_READ | PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE, FALSE, id)) {
         if (!process.value) throw std::runtime_error("Cannot read game process. Use the same privilege level as the game.");
+        std::filesystem::path imagePath;
         Handle snapshot(CreateToolhelp32Snapshot(TH32CS_SNAPMODULE | TH32CS_SNAPMODULE32, pid));
         MODULEENTRY32W module{}; module.dwSize = sizeof(module);
         if (Module32FirstW(snapshot.value, &module)) do {
             if (_wcsicmp(module.szModule, L"th06nc.exe") == 0) {
-                base = reinterpret_cast<uintptr_t>(module.modBaseAddr);
-                if (hashFile(module.szExePath) != offsets::sha256)
-                    throw std::runtime_error("Unsupported EXE hash. Offsets require revalidation for this game build.");
-                break;
+                base = reinterpret_cast<uintptr_t>(module.modBaseAddr); imageSize=module.modBaseSize; imagePath=module.szExePath; break;
             }
         } while (Module32NextW(snapshot.value, &module));
-        if (!base) throw std::runtime_error("Game module not found.");
-        std::cout << "Matched New Classic x64 profile. Module: 0x" << std::hex << base << std::dec << '\n';
-        // Verify key code bytes in the loaded image too. Never silently accept a different layout.
-        const std::array<unsigned char, 10> expected{0xc7,0x83,0x30,0x77,0,0,0,0,0x40,0x43};
-        std::array<unsigned char, 10> actual{};
-        read(0x6822e, actual.data(), actual.size());
-        if (actual != expected) throw std::runtime_error("Loaded player code differs from profile.");
+        if (!base || !imageSize) throw std::runtime_error("Game module not found.");
+        if (hashFile(imagePath) == offsets::sha256) {
+            layout=legacyLayout(); profileName="New Classic verified 1.03";
+            const std::array<unsigned char, 10> expected{0xc7,0x83,0x30,0x77,0,0,0,0,0x40,0x43};
+            std::array<unsigned char, 10> actual{}; read(0x6822e,actual.data(),actual.size());
+            if(actual!=expected) throw std::runtime_error("Loaded player code differs from the verified profile.");
+        } else {
+            const auto executable=ExecutableCode::load(imagePath);
+            IMAGE_DOS_HEADER dos{}; read(0,&dos,sizeof(dos));
+            if(dos.e_magic!=IMAGE_DOS_SIGNATURE || dos.e_lfanew<64) throw std::runtime_error("Invalid loaded image.");
+            IMAGE_NT_HEADERS64 nt{}; read(size_t(dos.e_lfanew),&nt,sizeof(nt));
+            if(nt.Signature!=IMAGE_NT_SIGNATURE || nt.FileHeader.TimeDateStamp!=executable.timestamp ||
+               nt.OptionalHeader.SizeOfImage!=executable.imageSize || imageSize!=executable.imageSize)
+                throw std::runtime_error("Game was updated while running. Restart it before attaching.");
+            layout=resolveLayout(executable);
+            profileName="New Classic signature profile";
+        }
+        std::cout << "Matched " << profileName << ". Module: 0x" << std::hex << base << std::dec << '\n';
     }
     void read(uintptr_t rva, void* data, size_t size) const {
+        if(rva>imageSize || size>imageSize-rva) throw std::runtime_error("Game read outside module bounds.");
         SIZE_T received = 0;
         if (!ReadProcessMemory(process.value, reinterpret_cast<const void*>(base+rva), data, size, &received) || received != size)
             throw std::runtime_error("Incomplete memory read; input stopped.");
@@ -119,7 +135,7 @@ struct Game {
         return value;
     }
     std::string translate(const std::string& key) const {
-        auto map=read<uintptr_t>(0xa6ec28);
+        auto map=read<uintptr_t>(layout.translations);
         if(!map || key.empty()) return key;
         uint64_t hash=0xcbf29ce484222325ull;
         for(unsigned char c:key) { hash^=c; hash*=0x100000001b3ull; }
@@ -159,77 +175,78 @@ struct State {
 State sample(const Game& game, bool focus) {
     State state;
     std::array<unsigned char, 0x170> p{};
-    game.read(offsets::player+offsets::playerXY, p.data(),p.size());
+    const uintptr_t player=game.base+game.layout.player;
+    game.absolute(player+game.layout.playerXY,p.data(),p.size());
     state.player = field<Vec>(p.data(),0);
-    state.radius = field<float>(p.data(), offsets::playerRadius-offsets::playerXY);
-    state.speed = field<float>(p.data(), (focus ? offsets::focusSpeed : offsets::speed)-offsets::playerXY);
-    state.playerState = p[offsets::playerState-offsets::playerXY];
-    state.fast=field<float>(p.data(),offsets::speed-offsets::playerXY);
-    state.slow=field<float>(p.data(),offsets::focusSpeed-offsets::playerXY);
-    state.grace=field<int>(p.data(),offsets::bombGrace-offsets::playerXY);
-    state.power=game.read<uint16_t>(offsets::power);
-    state.bombs=game.read<uint8_t>(offsets::bombs);
-    state.bombActive=game.read<uint8_t>(offsets::player+offsets::bombActive)!=0;
-    auto gui=game.read<uintptr_t>(offsets::gui);
-    if(gui) {
+    state.radius = field<float>(p.data(), game.layout.playerRadius-game.layout.playerXY);
+    state.speed = field<float>(p.data(), (focus ? game.layout.focusSpeed : game.layout.speed)-game.layout.playerXY);
+    state.playerState = p[game.layout.playerState-game.layout.playerXY];
+    state.fast=field<float>(p.data(),game.layout.speed-game.layout.playerXY);
+    state.slow=field<float>(p.data(),game.layout.focusSpeed-game.layout.playerXY);
+    state.grace=game.layout.bombGrace ? game.absolute<int>(player+game.layout.bombGrace):0;
+    state.power=game.layout.power ? game.read<uint16_t>(game.layout.power):0;
+    state.bombs=game.read<uint8_t>(game.layout.bombs);
+    state.bombActive=game.layout.bombActive ? game.absolute<uint8_t>(player+game.layout.bombActive)!=0:false;
+    auto gui=game.layout.gui ? game.read<uintptr_t>(game.layout.gui):0;
+    if(gui && game.layout.dialogue) {
         int dialogue=0; SIZE_T received=0;
-        if(!ReadProcessMemory(game.process.value,reinterpret_cast<void*>(gui+offsets::dialogue),&dialogue,sizeof(dialogue),&received) || received!=sizeof(dialogue))
+        if(!ReadProcessMemory(game.process.value,reinterpret_cast<void*>(gui+game.layout.dialogue),&dialogue,sizeof(dialogue),&received) || received!=sizeof(dialogue))
             throw std::runtime_error("Invalid dialogue snapshot.");
         state.dialogue=dialogue>=0;
     }
-    state.scene = game.read<int>(offsets::scene);
-    state.spellState=game.read<int>(offsets::spellState);
-    int spell=game.read<int>(offsets::spellId);
-    if(state.spellState>0 && spell>=0 && spell<int(offsets::spellRecordCount)) state.spell=spell;
+    state.scene = game.layout.scene ? game.read<int>(game.layout.scene):2;
+    state.spellState=game.layout.spellState ? game.read<int>(game.layout.spellState):0;
+    int spell=game.layout.spellId ? game.read<int>(game.layout.spellId):-1;
+    if(state.spellState>0 && spell>=0 && spell<int(game.layout.spellRecordCount)) state.spell=spell;
     if(state.spell>=0) {
         std::array<char,129> key{};
-        game.read(offsets::spellRecords+state.spell*offsets::spellRecordStride+offsets::spellRecordName,key.data(),128);
+        game.read(game.layout.spellRecords+state.spell*game.layout.spellRecordStride+game.layout.spellRecordName,key.data(),128);
         std::string value=key.data();
         if(value.starts_with("ST_ECLDATA")) state.spellKey=value;
     }
     std::array<unsigned char,10> flags{};
-    game.read(offsets::pause,flags.data(),flags.size());
+    if(game.layout.pause) game.read(game.layout.pause,flags.data(),flags.size());
+    const bool validPlayerState=state.playerState==0 || state.playerState==3;
     state.active = state.scene == 2 && !flags[0] && !flags[1] && !flags[6] && !flags[9] &&
-        (state.playerState == 0 || state.playerState == 3) && finite(state.player) &&
+        validPlayerState && finite(state.player) &&
         state.player.x >= 0 && state.player.x <= 384 && state.player.y >= 0 && state.player.y <= 448 &&
         std::isfinite(state.speed) && state.speed > 0 && state.speed <= 10 &&
         std::isfinite(state.radius) && state.radius > 0 && state.radius <= 10 &&
         std::isfinite(state.fast) && state.fast>0 && state.fast<=10 &&
         std::isfinite(state.slow) && state.slow>0 && state.slow<=state.fast && state.power<=128 && state.bombs<=8;
-    // A single block read avoids 640 individual ReadProcessMemory calls per tick.
-    std::vector<unsigned char> data(offsets::bulletStride*offsets::bulletCount);
-    game.read(offsets::bullets,data.data(),data.size());
-    for (size_t i=0; i<offsets::bulletCount; ++i) {
-        const auto* b = data.data()+i*offsets::bulletStride;
-        auto status = field<uint16_t>(b,offsets::bulletState);
+    std::vector<unsigned char> data(game.layout.bulletStride*game.layout.bulletCount);
+    game.read(game.layout.bullets,data.data(),data.size());
+    for (size_t i=0; i<game.layout.bulletCount; ++i) {
+        const auto* b = data.data()+i*game.layout.bulletStride;
+        auto status = field<uint16_t>(b,game.layout.bulletState);
         if (status == 0 || status == 5) continue;
         if (status > 5) throw std::runtime_error("Invalid bullet state; profile or snapshot invalid.");
-        Vec pos = field<Vec>(b,offsets::bulletXY), v = field<Vec>(b,offsets::bulletVelocity);
-        Vec size = field<Vec>(b,offsets::bulletSize);
+        Vec pos = field<Vec>(b,game.layout.bulletXY), v = field<Vec>(b,game.layout.bulletVelocity);
+        Vec size = field<Vec>(b,game.layout.bulletSize);
         if (!finite(pos) || !finite(v) || !finite(size) || size.x <= 0 || size.y <= 0 ||
             size.x > 128 || size.y > 128 || std::abs(v.x)>100 || std::abs(v.y)>100)
             throw std::runtime_error("Invalid bullet values; input stopped.");
         state.bullets.push_back({pos,v,std::min(size.x,size.y)*.5f});
     }
-    data.resize(offsets::laserStride*offsets::laserCount);
-    game.read(offsets::lasers,data.data(),data.size());
-    state.simulationFrame=game.read<uint32_t>(offsets::simulationFrame);
-    for(size_t i=0;i<offsets::laserCount;++i) {
-        const auto* raw=data.data()+i*offsets::laserStride;
-        if(!raw[offsets::laserInUse]) continue;
+    data.resize(game.layout.laserStride*game.layout.laserCount);
+    game.read(game.layout.lasers,data.data(),data.size());
+    state.simulationFrame=game.read<uint32_t>(game.layout.simulationFrame);
+    for(size_t i=0;i<game.layout.laserCount;++i) {
+        const auto* raw=data.data()+i*game.layout.laserStride;
+        if(!raw[game.layout.laserInUse]) continue;
         Laser laser;
         laser.slot=unsigned(i);
-        laser.origin=field<Vec>(raw,offsets::laserOrigin);
-        laser.angle=field<float>(raw,offsets::laserAngle);
-        laser.start=field<float>(raw,offsets::laserStart);
-        laser.end=field<float>(raw,offsets::laserEnd);
-        laser.maxLength=field<float>(raw,offsets::laserLength);
-        laser.speed=field<float>(raw,offsets::laserSpeed);
-        laser.width=field<float>(raw,offsets::laserWidth);
-        laser.phase=raw[offsets::laserPhase];
-        laser.timer=field<int>(raw,offsets::laserTimer);
-        laser.startTime=field<int>(raw,offsets::laserStartTime);
-        laser.duration=field<int>(raw,offsets::laserDuration);
+        laser.origin=field<Vec>(raw,game.layout.laserOrigin);
+        laser.angle=field<float>(raw,game.layout.laserAngle);
+        laser.start=field<float>(raw,game.layout.laserStart);
+        laser.end=field<float>(raw,game.layout.laserEnd);
+        laser.maxLength=field<float>(raw,game.layout.laserLength);
+        laser.speed=field<float>(raw,game.layout.laserSpeed);
+        laser.width=field<float>(raw,game.layout.laserWidth);
+        laser.phase=raw[game.layout.laserPhase];
+        laser.timer=field<int>(raw,game.layout.laserTimer);
+        laser.startTime=field<int>(raw,game.layout.laserStartTime);
+        laser.duration=field<int>(raw,game.layout.laserDuration);
         if(!finite(laser.origin) || !std::isfinite(laser.angle) || !std::isfinite(laser.start) ||
            !std::isfinite(laser.end) || !std::isfinite(laser.maxLength) || !std::isfinite(laser.speed) ||
            !std::isfinite(laser.width) || laser.width<0 || laser.width>1024 || std::abs(laser.speed)>100 ||
@@ -238,33 +255,33 @@ State sample(const Game& game, bool focus) {
            laser.duration<0 || laser.duration>10000000) throw std::runtime_error("Invalid laser snapshot; input stopped.");
         state.lasers.push_back(laser);
     }
-    data.resize(offsets::itemStride*offsets::itemCount);
-    game.read(offsets::items,data.data(),data.size());
-    for(size_t i=0;i<offsets::itemCount;++i) {
-        const auto* item=data.data()+i*offsets::itemStride;
-        if(!item[offsets::itemActive]) continue;
-        Vec pos=field<Vec>(item,offsets::itemXY), v=field<Vec>(item,offsets::itemVelocity);
-        int type=item[offsets::itemType];
+    data.resize(game.layout.itemStride*game.layout.itemCount);
+    game.read(game.layout.items,data.data(),data.size());
+    for(size_t i=0;i<game.layout.itemCount;++i) {
+        const auto* item=data.data()+i*game.layout.itemStride;
+        if(!item[game.layout.itemActive]) continue;
+        Vec pos=field<Vec>(item,game.layout.itemXY), v=field<Vec>(item,game.layout.itemVelocity);
+        int type=item[game.layout.itemType];
         if(!finite(pos) || !finite(v) || type>6) throw std::runtime_error("Invalid item snapshot.");
         state.items.push_back({pos,v,type,item[0x0c]==1});
     }
-    data.resize(offsets::enemyStride*offsets::enemyCount);
-    game.read(offsets::enemies,data.data(),data.size());
-    for(size_t i=0;i<offsets::enemyCount;++i) {
-        const auto* enemy=data.data()+i*offsets::enemyStride;
-        if(!(enemy[offsets::enemyFlags]&0x80)) continue;
-        unsigned flags=enemy[offsets::enemyFlags+1];
-        Vec pos=field<Vec>(enemy,offsets::enemyXY), v=field<Vec>(enemy,offsets::enemyVelocity);
-        Vec size=field<Vec>(enemy,offsets::enemySize);
-        int life=field<int>(enemy,offsets::enemyLife);
+    data.resize(game.layout.enemyStride*game.layout.enemyCount);
+    game.read(game.layout.enemies,data.data(),data.size());
+    for(size_t i=0;i<game.layout.enemyCount;++i) {
+        const auto* enemy=data.data()+i*game.layout.enemyStride;
+        if(!(enemy[game.layout.enemyFlags]&0x80)) continue;
+        unsigned flags=enemy[game.layout.enemyFlags+1];
+        Vec pos=field<Vec>(enemy,game.layout.enemyXY), v=field<Vec>(enemy,game.layout.enemyVelocity);
+        Vec size=field<Vec>(enemy,game.layout.enemySize);
+        int life=field<int>(enemy,game.layout.enemyLife);
         if(!finite(pos) || !finite(v) || !finite(size)) throw std::runtime_error("Invalid enemy snapshot.");
         if(!(flags&9) || life<=0) continue;
         state.enemies.push_back({pos,v,size,life,bool(flags&8),bool((flags&1)&&(flags&16)),bool((flags&1)&&(flags&2))});
     }
     // Refuse a sample if a pause/menu transition occurred during the block read.
     std::array<unsigned char,10> after{};
-    game.read(offsets::pause,after.data(),after.size());
-    state.active = state.active && after == flags && game.read<int>(offsets::scene) == state.scene;
+    if(game.layout.pause) game.read(game.layout.pause,after.data(),after.size());
+    state.active = state.active && after == flags && game.read<int>(game.layout.scene) == state.scene;
     return state;
 }
 
@@ -352,6 +369,7 @@ bool down(int key) { return (GetAsyncKeyState(key)&0x8000) != 0; }
 int selfTest() {
     int tests=0;
     auto require=[&](bool condition,const char* name) { ++tests; if(!condition) throw std::runtime_error(name); };
+    layoutPrimitiveTests(require);
     Vec p{192,350};
     require(plan(p,2,1.25,{}, {1,0}) == Direction{1,0},"Preserve player input on empty field");
     std::vector<Bullet> incoming{{{192,320},{0,3},4}};
@@ -398,6 +416,13 @@ int selfTest() {
     for(int i=0;i<32;++i) { float a=float(i)*6.2831853f/32; ring.push_back({{p.x+20*std::cos(a),p.y+20*std::sin(a)},{-4*std::cos(a),-4*std::sin(a)},4}); }
     require(!escapeAvailable(p,1.25,ring,4,2),"Closing ring triggers last resort");
     BombControl bomb;
+    require(bombEligible(true,true,0,false,false,8),"Autobomb eligibility does not depend on inventory");
+    require(!bombEligible(true,true,1,false,false,8),"Autobomb waits for respawn to finish");
+    require(!bombEligible(true,true,2,false,false,8),"Autobomb never triggers while dead");
+    require(!bombEligible(true,true,3,false,false,8),"Invulnerable player does not need an emergency bomb");
+    require(!bombEligible(true,true,0,true,false,8),"An active bomb suppresses further bomb input");
+    require(!bombEligible(true,true,0,false,true,8),"Autobomb is disabled during dialogue");
+    require(!bombEligible(true,true,0,false,false,0),"Respect the game's bomb input gate");
     require(!bomb.update(0,false,true),"Inactive bomb gate blocks input");
     require(!bomb.update(0,true,false),"Safe route preserves bombs");
     require(bomb.update(0,true,true),"Trapped eligible player starts bomb pulse");
@@ -545,13 +570,21 @@ int assistMain(int argc,char** argv) {
     try {
         std::string mode = argc>1 ? argv[1] : "--assist";
         if (mode == "--self-test") return selfTest();
+        if (mode == "--verify-layout") {
+            if(argc!=3) throw std::runtime_error("Usage: --verify-layout path-to-th06nc.exe");
+            const auto code=ExecutableCode::load(std::filesystem::path(argv[2]));
+            const auto resolved=resolveLayout(code); printLayout(resolved,std::cout);
+            verifyLayoutRelocation(code);
+            std::cout<<"All required fields resolved; simulated relink passed for all 18 global addresses.\n";
+            return 0;
+        }
         if (mode == "--stop") {
             Handle event(OpenEventW(EVENT_MODIFY_STATE,FALSE,L"Local\\TouhouNewClassicDodgeAssistStop"));
             if(event.value) SetEvent(event.value);
             return 0;
         }
         if (mode != "--assist" && mode != "--probe" && mode != "--trace" && mode != "--spell-list") {
-            std::cout << "dodge_assist.exe [--assist | --probe [seconds] | --trace [seconds] | --self-test | --spell-list | --stop]\n"; return 0;
+            std::cout << "dodge_assist.exe [--assist | --probe [seconds] | --trace [seconds] | --self-test | --spell-list | --verify-layout EXE | --stop]\n"; return 0;
         }
         #ifndef TH_ASSIST_DLL
         SetConsoleCtrlHandler(control,TRUE);
@@ -566,10 +599,10 @@ int assistMain(int argc,char** argv) {
         if (!pid) throw std::runtime_error("Start th06nc.exe and enter a stage first.");
         Game game(pid);
         if(mode=="--spell-list") {
-            std::cout << "spellState=" << game.read<int>(offsets::spellState) << " spellId=" << game.read<int>(offsets::spellId) << '\n';
-            for(size_t i=0;i<offsets::spellRecordCount;++i) {
+            std::cout << "spellState=" << game.read<int>(game.layout.spellState) << " spellId=" << game.read<int>(game.layout.spellId) << '\n';
+            for(size_t i=0;i<game.layout.spellRecordCount;++i) {
                 std::array<char,129> name{};
-                game.read(offsets::spellRecords+i*offsets::spellRecordStride+offsets::spellRecordName,name.data(),128);
+                game.read(game.layout.spellRecords+i*game.layout.spellRecordStride+game.layout.spellRecordName,name.data(),128);
                 std::string key=name.data();
                 if(key.starts_with("ST_ECLDATA7_")) std::cout << i << " " << key << " = " << game.translate(key) << '\n';
             }
@@ -726,8 +759,8 @@ int assistMain(int argc,char** argv) {
                 } else keyboard->release(game.foreground());
                 keyboard->focus(autoMove && playing && focused,game.foreground());
                 keyboard->shoot(autoplay.enabled && playing,game.foreground());
-                bool eligible=playing && (autobomb.enabled || autoplay.enabled) && s.playerState==0 &&
-                    s.bombs>0 && !s.bombActive && !s.dialogue && s.grace>0;
+                bool eligible=bombEligible(playing,autobomb.enabled || autoplay.enabled,s.playerState,
+                    s.bombActive,s.dialogue,s.grace);
                 bool imminentTrail=autoMove && extra.card==ExtraCard::Laevateinn && plannedFrame==s.simulationFrame && route.safeFrames<6;
                 bool trapped=eligible && (imminentTrail || !escapeAvailable(s.player,s.radius,threats,
                     keyboard->physicalFocus() ? s.slow:s.fast,s.slow,s.lasers));

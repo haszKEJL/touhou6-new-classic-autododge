@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(TouhouAssist VERSION 1.4.1 LANGUAGES C CXX)
+project(TouhouAssist VERSION 1.5.0 LANGUAGES C CXX)
 if(NOT WIN32 OR NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
     message(FATAL_ERROR "This project requires Windows x64.")
 endif()

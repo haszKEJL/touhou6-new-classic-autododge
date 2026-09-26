@@ -1,8 +1,9 @@
 #pragma once
 #include <cstddef>
 #include <cstdint>
-// Derived from the user's New Classic 1.03 x64 binary, not the 2002 game.
-// Every address is an RVA, relative to the loaded th06nc.exe module.
+// Legacy profile derived from New Classic 1.03 x64, not the 2002 game.
+// Newer builds resolve executable code references in game_layout.hpp.
+// Every address below is an RVA, relative to the loaded th06nc.exe module.
 namespace offsets {
 inline constexpr uintptr_t spellState=0xbadf60, spellId=0xbadf68, spellRecords=0x4f27c8;
 inline constexpr size_t spellRecordStride=0x180, spellRecordName=0x18, spellRecordCount=0x86;
