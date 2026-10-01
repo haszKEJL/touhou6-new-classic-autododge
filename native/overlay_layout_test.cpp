@@ -27,7 +27,18 @@ int main() {
         std::cout<<"Widths: hold "<<ImGui::CalcTextSize(text.holdHelp).x/scale<<" footer "<<(ImGui::CalcTextSize(text.stopAll).x+ImGui::CalcTextSize(text.pausedHelp).x)/scale+36<<" capture "<<ImGui::CalcTextSize(text.capture).x/scale<<'\n';
         for(auto description:text.descriptions) good=good && ImGui::CalcTextSize(description).x<340*scale;
         good=good && ImGui::CalcTextSize(text.capture).x<=134*scale;
+        good=good && ImGui::CalcTextSize(text.predictionHelp).x<=710*scale;
     }
+    io.FontGlobalScale=1; io.DisplaySize={1920,1080};
+    auto& state=controls::state; state.menu=false; state.ready=true; state.playing=true; state.showPrediction=true;
+    state.prediction=prediction::project({192,384},{1,-1},4); state.prediction.target=Vec{260,320};
+    state.predictionTime=GetTickCount64();
+    auto previewVertices=[&]() { ImGui::NewFrame(); drawPrediction(); ImGui::Render(); return ImGui::GetDrawData()->TotalVtxCount; };
+    good=good && previewVertices()>0;
+    state.showPrediction=false; good=good && previewVertices()==0;
+    state.showPrediction=true; state.playing=false; good=good && previewVertices()==0;
+    state.playing=true; state.predictionTime=GetTickCount64()-1000; good=good && previewVertices()==0;
+    state.predictionTime=GetTickCount64(); state.stop(); good=good && previewVertices()==0;
     good=good && i18n::valid(-1)==i18n::Language::English && i18n::valid(99)==i18n::Language::English;
     ImGui::DestroyContext(); std::cout<<(good ? "PASS":"FAIL")<<" localization, glyphs and panel layout\n"; return good ? 0:1;
 }

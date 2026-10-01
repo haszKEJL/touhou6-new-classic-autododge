@@ -1,4 +1,4 @@
-Scarlet Assist 1.5.0
+Scarlet Assist 1.6.0
 Author: haszKEJL
 
 1. Extract the full ZIP.
@@ -10,6 +10,8 @@ F5 autoplay / F6 autobomb / F7 collection / F8 dodge / F9 disable all.
 All features start OFF. Each supports custom keys and Toggle/Hold mode.
 Autobomb attempts X when no safe escape is predicted. The game handles bomb stock.
 For dodge on Shift: select Hold, assign Shift, enable Armed, close the panel.
+Show planned movement: optional route preview in the Insert menu, saved automatically.
+Cyan: route, purple ring: goal, red: no safe route. Autoplay predicts up to 36 frames.
 The panel pauses automation, NOT the game. Pause a stage before editing settings.
 Restart the game after replacing the DLL.
 

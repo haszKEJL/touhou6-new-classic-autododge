@@ -1,5 +1,7 @@
 #pragma once
 #include "behavior.hpp"
+#include "prediction.hpp"
+#include <cstdint>
 
 // Full routes are searched again every simulation tick. Safety outranks the
 // preferred firing lane or pickup; the first action alone is sent to the game.
@@ -68,26 +70,43 @@ struct Forecast {
         return best;
     }
 };
-struct Decision { Direction direction{}; bool focus=false; int safeFrames=0; float margin=0; };
+struct Decision { Direction direction{}; bool focus=false; int safeFrames=0; float margin=0; prediction::Path path{}; };
 struct OrbitLane { Vec center{}; float radius=90; };
+struct Step { int8_t x=0,y=0; bool focus=false; };
 struct Node {
     Vec p{};
     Direction first{},last{};
     bool firstFocus=false,lastFocus=false;
     float cost=0,margin=24,futurePenalty=0;
     int survived=0;
+    std::array<Step,horizon/stepFrames> steps{};
 };
 inline Decision choose(Vec p,float fast,float slow,float radius,const Forecast& forecast,Vec target,
                        Direction wanted,bool preferSlow,bool forcedSlow,Direction previous={},float turnCost=.22f,
-                       std::optional<OrbitLane> orbitLane=std::nullopt) {
+                       std::optional<OrbitLane> orbitLane=std::nullopt,bool capturePath=false) {
     std::vector<Node> beam(1); beam[0].p=p; beam[0].last=previous;
     Node fallback=beam.front();
+    auto decision=[&](const Node& node,int safeFrames) {
+        prediction::Path path;
+        if(capturePath) {
+            Vec at=p; path.points[0]=at; path.count=1;
+            for(int frame=0;frame<std::max(1,safeFrames);++frame) {
+                const auto step=safeFrames ? node.steps[frame/stepFrames]:Step{int8_t(node.first.x),int8_t(node.first.y),node.firstFocus};
+                Vec v=velocity({step.x,step.y},step.focus ? slow:fast);
+                at={std::clamp(at.x+v.x,8.f,376.f),std::clamp(at.y+v.y,16.f,432.f)};
+                path.points[path.count++]=at;
+            }
+        }
+        path.safeFrames=safeFrames; path.focus=node.firstFocus; path.searched=true; path.target=target;
+        return Decision{node.first,node.firstFocus,safeFrames,node.margin,path};
+    };
     for(int start=0;start<horizon;start+=stepFrames) {
         std::vector<Node> candidates;
         candidates.reserve(beam.size()*18);
         for(const auto& parent:beam) for(int focus=forcedSlow ? 1:0;focus<=1;++focus)
         for(int x=-1;x<=1;++x) for(int y=-1;y<=1;++y) {
             Node node=parent; Direction d{x,y};
+            if(capturePath) node.steps[start/stepFrames]={int8_t(x),int8_t(y),bool(focus)};
             if(start==0) { node.first=d; node.firstFocus=bool(focus); }
             Vec v=velocity(d,focus ? slow:fast);
             bool safe=true;
@@ -134,7 +153,7 @@ inline Decision choose(Vec p,float fast,float slow,float radius,const Forecast& 
         }
         if(start+stepFrames==horizon) {
             const auto& best=beam.front();
-            return {best.first,best.firstFocus,horizon,best.margin};
+            return decision(best,horizon);
         }
     }
     if(fallback.survived==0) {
@@ -150,7 +169,7 @@ inline Decision choose(Vec p,float fast,float slow,float radius,const Forecast& 
             if(score>best) { best=score; fallback.first=d; fallback.firstFocus=bool(focus); }
         }
     }
-    return {fallback.first,fallback.firstFocus,fallback.survived,fallback.margin};
+    return decision(fallback,fallback.survived);
 }
 } // namespace navigation
 

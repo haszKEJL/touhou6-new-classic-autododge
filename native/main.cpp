@@ -511,6 +511,24 @@ int selfTest() {
     require(blocked.safeFrames==0,"Route planner reports immediate overlap");
     auto laserRoute=navigation::choose({180,350},4,2,1.25,navigation::Forecast({},{vertical}),{210,350},{1,0},false,false);
     require(laserRoute.safeFrames==36 && laserRoute.direction.x!=1,"Route respects continuous beam barrier");
+    auto preview=navigation::choose({180,350},4,2,1.25,navigation::Forecast({},{vertical}),{210,350},{1,0},false,false,{},.22f,std::nullopt,true);
+    require(preview.direction==laserRoute.direction && preview.focus==laserRoute.focus && preview.margin==laserRoute.margin,
+            "Preview preserves the planner decision");
+    require(preview.path.count==37 && preview.path.safeFrames==36 && preview.path.searched && preview.path.target->x==210,
+            "Preview records full selected route and goal");
+    Vec firstStep=velocity(preview.direction,preview.focus ? 2:4);
+    require(std::abs(preview.path.points[1].x-180-firstStep.x)<.001f && std::abs(preview.path.points[1].y-350-firstStep.y)<.001f,
+            "Preview begins with the action sent to the game");
+    navigation::Forecast laserForecast({},{vertical}); bool previewSafe=true;
+    for(int frame=0;frame<36;++frame) previewSafe=previewSafe && laserForecast.clearance(preview.path.points[frame],preview.path.points[frame+1],frame,2.05f)>0;
+    require(previewSafe,"Every displayed safe segment avoids the laser");
+    auto trappedPreview=navigation::choose(p,4,2,1.25,navigation::Forecast({{p,{},20}},{}),p,{},false,false,{},.22f,std::nullopt,true);
+    require(trappedPreview.path.count==2 && trappedPreview.path.safeFrames==0,"No-route preview marks only the immediate fallback");
+    auto projected=prediction::project({374,430},{1,1},4);
+    require(projected.count==13 && projected.points[12].x==376 && projected.points[12].y==432 && !projected.searched,
+            "Direction forecast stops at playfield boundaries");
+    auto map=prediction::mapping(1920,1080); auto origin=map.point({0,0}); auto bottom=map.point({384,448});
+    require(origin.x==528 && origin.y==36 && bottom.x==1392 && bottom.y==1044,"Preview aligns with New Classic widescreen playfield");
     Laser upcoming=vertical; upcoming.phase=0; upcoming.startTime=18; upcoming.width=80;
     auto early=navigation::choose(p,4,2,1.25,navigation::Forecast({},{upcoming}),p,{},true,false);
     require(early.safeFrames==36 && early.direction.x!=0,"Leave wide warning before old 12-frame horizon");
@@ -552,13 +570,16 @@ int selfTest() {
     struct RemoveTestIni { std::filesystem::path path; ~RemoveTestIni() { std::error_code error; std::filesystem::remove(path,error); } } cleanupIni{preferences.config};
     for(int language=0;language<3;++language) {
         preferences.language=i18n::valid(language);
+        preferences.showPrediction=language!=1;
         preferences.bindings[0].key=VK_LSHIFT; preferences.bindings[0].hold=true; preferences.bindings[0].enabled=true;
         controls::save(); require(!preferences.saveFailed,"Save preferences to INI");
         preferences.language=i18n::Language::English; preferences.bindings[0].key=VK_F8; preferences.bindings[0].hold=false;
+        preferences.showPrediction=!preferences.showPrediction;
         controls::readPreferences();
         require(int(preferences.language)==language,"Language persists across settings reload");
         require(preferences.bindings[0].key==VK_LSHIFT && preferences.bindings[0].hold,"Custom Shift hold binding persists");
         require(!preferences.bindings[0].enabled,"Reload never arms automation");
+        require(preferences.showPrediction==(language!=1),"Prediction visibility persists across settings reload");
     }
     WritePrivateProfileStringW(L"UI",L"Language",L"99",preferences.config.c_str()); controls::readPreferences();
     require(preferences.language==i18n::Language::English,"Invalid language falls back to English");
@@ -713,6 +734,13 @@ int assistMain(int argc,char** argv) {
                 playing=playing && !controls::state.menu;
                 { std::lock_guard lock(controls::state.mutex); auto& ui=controls::state; ui.playing=playing; ui.bullets=int(s.bullets.size()); ui.lasers=int(s.lasers.size()); ui.power=s.power; ui.bombs=s.bombs; ui.pattern=extra.profile ? std::string(extra.profile->name):"--"; }
 #endif
+                bool showPrediction=false;
+#ifdef TH_ASSIST_DLL
+                { std::lock_guard lock(controls::state.mutex);
+                  showPrediction=controls::state.showPrediction;
+                  if(!showPrediction || !playing || !(dodge.enabled || collect.enabled || (autoplay.enabled && !s.dialogue))) controls::state.prediction.count=0;
+                }
+#endif
                 auto threats=obstacles(s.bullets,s.enemies);
                 double now=std::chrono::duration<double>(tick-start).count();
                 bool autoMove=autoplay.enabled && !s.dialogue;
@@ -737,11 +765,11 @@ int assistMain(int argc,char** argv) {
                     focused=keyboard->physicalFocus() || (autoMove && preferFocus(s.player,threats,intent,s.lasers));
                     s.speed=focused ? s.slow:s.fast;
                     if(autoMove) {
-                        if(plannedFrame!=s.simulationFrame || (keyboard->physicalFocus() && !route.focus)) {
+                        if(plannedFrame!=s.simulationFrame || (keyboard->physicalFocus() && !route.focus) || (showPrediction && !route.path.count)) {
                             Vec goal=intent.target.value_or(Vec{s.player.x+intent.direction.x*80.f,s.player.y+intent.direction.y*80.f});
                             navigation::Forecast forecast(threats,s.lasers,extra.card==ExtraCard::Laevateinn);
                             route=navigation::choose(s.player,s.fast,s.slow,s.radius,forecast,goal,intent.direction,focused,keyboard->physicalFocus(),previousMove,
-                                extra.card==ExtraCard::Maze ? .8f:.22f,extra.orbitLane());
+                                extra.card==ExtraCard::Maze ? .8f:.22f,extra.orbitLane(),showPrediction);
                             plannedFrame=s.simulationFrame;
                         }
                         d=route.direction; focused=route.focus; s.speed=focused ? s.slow:s.fast;
@@ -754,6 +782,14 @@ int assistMain(int argc,char** argv) {
                     }
                     correction = autoMove || d != user;
                     previousMove=d;
+#ifdef TH_ASSIST_DLL
+                    if(showPrediction) {
+                        auto path=autoMove ? route.path:prediction::project(s.player,d,s.speed);
+                        if(!autoMove) { path.target=intent.target; path.focus=focused; }
+                        std::lock_guard lock(controls::state.mutex);
+                        controls::state.prediction=path; controls::state.predictionTime=GetTickCount64();
+                    }
+#endif
                     if(correction && game.foreground()) keyboard->correct(d);
                     else keyboard->release(game.foreground());
                 } else keyboard->release(game.foreground());

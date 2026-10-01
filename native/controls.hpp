@@ -8,6 +8,7 @@
 #include <mutex>
 #include <string>
 #include "i18n.hpp"
+#include "prediction.hpp"
 namespace controls {
 struct Binding {
     int key=0;
@@ -27,6 +28,9 @@ struct Shared {
     std::string status, pattern;
     int bullets=0, lasers=0, power=0, bombs=0;
     bool playing=false, ready=false;
+    bool showPrediction=false;
+    prediction::Path prediction;
+    ULONGLONG predictionTime=0;
     std::filesystem::path config;
     bool held(int key) const {
         if(key==VK_SHIFT) return physical[VK_LSHIFT] || physical[VK_RSHIFT];
@@ -34,11 +38,12 @@ struct Shared {
         if(key==VK_MENU) return physical[VK_LMENU] || physical[VK_RMENU];
         return key>0 && key<256 && physical[key];
     }
-    void stop() { for(auto& b:bindings) { b.enabled=false; b.active=false; b.blocked=true; } }
+    void stop() { for(auto& b:bindings) { b.enabled=false; b.active=false; b.blocked=true; } prediction.count=0; }
 };
 inline Shared state;
 inline void save() {
     state.saveFailed=!WritePrivateProfileStringW(L"UI",L"Language",std::to_wstring(int(state.language)).c_str(),state.config.c_str());
+    if(!WritePrivateProfileStringW(L"UI",L"Prediction",state.showPrediction ? L"1":L"0",state.config.c_str())) state.saveFailed=true;
     for(int i=0;i<4;++i) {
         auto section=L"Feature"+std::to_wstring(i);
         if(!WritePrivateProfileStringW(section.c_str(),L"Key",std::to_wstring(state.bindings[i].key).c_str(),state.config.c_str())) state.saveFailed=true;
@@ -47,6 +52,7 @@ inline void save() {
 }
 inline void readPreferences() {
     state.language=i18n::valid(int(GetPrivateProfileIntW(L"UI",L"Language",0,state.config.c_str())));
+    state.showPrediction=GetPrivateProfileIntW(L"UI",L"Prediction",0,state.config.c_str())==1;
     for(int i=0;i<4;++i) {
         auto section=L"Feature"+std::to_wstring(i); auto& b=state.bindings[i];
         int key=int(GetPrivateProfileIntW(section.c_str(),L"Key",b.key,state.config.c_str()));

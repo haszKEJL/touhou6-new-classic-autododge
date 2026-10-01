@@ -6,6 +6,8 @@ Auto dodge adjusts movement around bullets and lasers. Autoplay adds shooting, i
 
 The in-game menu uses Dear ImGui with DirectX 11 and MinHook. Press **Insert** to open it. English, Polish and Russian are available; language and key bindings are saved between sessions.
 
+Enable **Show planned movement** in the menu to see autoplay's current route (up to 36 frames), its goal and the number of safe frames found. Cyan marks the route, a purple ring marks the goal, and red indicates no safe route was found. Auto dodge and collection show a shorter direction forecast. The preview is off by default, saved between sessions and hidden while automation is paused. Plans are recalculated during play, so the line can change as new threats appear.
+
 ## Download and run
 
 Download the Windows x64 ZIP from [Releases](https://github.com/haszKEJL/touhou6-new-classic-autododge/releases), extract it, start `th06nc.exe`, then run `run.bat`. No compiler or Python required.

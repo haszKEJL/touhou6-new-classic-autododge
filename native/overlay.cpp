@@ -55,16 +55,55 @@ std::string keyName(int key) {
     if(!GetKeyNameTextW(scan,label,80)) return "VK "+std::to_string(key);
     char utf8[240]{}; WideCharToMultiByte(CP_UTF8,0,label,-1,utf8,240,nullptr,nullptr); return utf8;
 }
+void drawPrediction() {
+    prediction::Path path;
+    i18n::Language language;
+    {
+        std::lock_guard lock(controls::state.mutex); const auto& state=controls::state;
+        if(!state.showPrediction || !state.ready || !state.playing || state.menu ||
+           state.prediction.count<2 || GetTickCount64()-state.predictionTime>150) return;
+        path=state.prediction; language=state.language;
+    }
+    auto* viewport=ImGui::GetMainViewport();
+    auto map=prediction::mapping(viewport->Size.x,viewport->Size.y);
+    auto screen=[&](Vec p) { auto q=map.point(p); return ImVec2{viewport->Pos.x+q.x,viewport->Pos.y+q.y}; };
+    auto* draw=ImGui::GetBackgroundDrawList();
+    draw->PushClipRect(screen({0,0}),screen({384,448}),true);
+    const ImU32 cyan=IM_COL32(92,235,213,220), red=IM_COL32(255,113,118,235);
+    const float thickness=std::clamp(map.scale,1.f,2.5f);
+    bool blocked=path.searched && path.safeFrames==0;
+    for(int i=1;i<path.count;++i) {
+        auto a=screen(path.points[i-1]), b=screen(path.points[i]);
+        draw->AddLine(a,b,IM_COL32(10,15,28,180),thickness+3);
+        draw->AddLine(a,b,blocked ? red:cyan,thickness);
+        if(i%4==0) draw->AddCircleFilled(b,2*thickness,blocked ? red:cyan,12);
+    }
+    auto end=screen(path.points[path.count-1]);
+    draw->AddCircle(end,5*thickness,blocked ? red:cyan,24,thickness);
+    if(path.target) {
+        auto goal=screen(*path.target);
+        draw->AddCircle(goal,7*thickness,IM_COL32(203,167,255,165),24,thickness);
+        draw->AddLine({goal.x-3*thickness,goal.y},{goal.x+3*thickness,goal.y},IM_COL32(203,167,255,165),thickness);
+        draw->AddLine({goal.x,goal.y-3*thickness},{goal.x,goal.y+3*thickness},IM_COL32(203,167,255,165),thickness);
+    }
+    const auto& text=i18n::get(language);
+    std::string label=path.searched ? text.plannedRoute:text.projectedMove;
+    if(path.searched) label+="  "+std::to_string(path.safeFrames)+"/36";
+    auto pos=screen({10,432});
+    draw->AddText({pos.x+1,pos.y+1},IM_COL32(0,0,0,220),label.c_str());
+    draw->AddText(pos,blocked ? red:cyan,label.c_str());
+    draw->PopClipRect();
+}
 void draw() {
     if(!controls::state.menu) return;
     std::lock_guard lock(controls::state.mutex); auto& state=controls::state;
     const auto& text=i18n::get(state.language);
     auto* viewport=ImGui::GetMainViewport();
-    const float scale=std::clamp(std::min((viewport->Size.x-24.f)/760.f,(viewport->Size.y-24.f)/660.f),.4f,1.f);
+    const float scale=std::clamp(std::min((viewport->Size.x-24.f)/760.f,(viewport->Size.y-24.f)/716.f),.4f,1.f);
     static const ImGuiStyle baseStyle=ImGui::GetStyle(); ImGui::GetStyle()=baseStyle; ImGui::GetStyle().ScaleAllSizes(scale);
     ImGui::GetIO().FontGlobalScale=scale;
     ImGui::SetNextWindowPos(viewport->GetCenter(),ImGuiCond_FirstUseEver,{.5f,.5f});
-    ImGui::SetNextWindowSize({760*scale,660*scale},ImGuiCond_Always);
+    ImGui::SetNextWindowSize({760*scale,716*scale},ImGuiCond_Always);
     if(ImGui::Begin("Scarlet Assist",nullptr,ImGuiWindowFlags_NoTitleBar|ImGuiWindowFlags_NoResize|ImGuiWindowFlags_NoCollapse)) {
         ImGui::TextColored({.76f,.59f,1,1},"S C A R L E T   /   A S S I S T");
         ImGui::SameLine(590*scale); if(ImGui::SmallButton(text.hide)) state.menu=false;
@@ -93,6 +132,8 @@ void draw() {
         }
         if(state.capture>=0) ImGui::TextColored({.76f,.59f,1,1},"%s",text.captureHelp);
         else ImGui::TextDisabled("%s",text.holdHelp);
+        if(ImGui::Checkbox(text.prediction,&state.showPrediction)) { state.prediction.count=0; controls::save(); }
+        ImGui::TextDisabled("%s",text.predictionHelp);
         if(ImGui::Button(text.stopAll)) state.stop();
         ImGui::SameLine(); ImGui::TextDisabled("%s",text.pausedHelp);
         ImGui::Separator();
@@ -126,7 +167,7 @@ HRESULT STDMETHODCALLTYPE present(IDXGISwapChain* chain,UINT interval,UINT flags
         if(!(flags&DXGI_PRESENT_TEST)) {
             if(!activeChain && !initializationFailed && !initialize(chain)) { initializationFailed=true; controls::status("Panel initialization failed; restart game."); }
             if(activeChain==chain && (target || makeTarget(chain))) {
-                ImGui_ImplDX11_NewFrame(); ImGui_ImplWin32_NewFrame(); ImGui::NewFrame(); draw(); ImGui::Render();
+                ImGui_ImplDX11_NewFrame(); ImGui_ImplWin32_NewFrame(); ImGui::NewFrame(); drawPrediction(); draw(); ImGui::Render();
                 ID3D11RenderTargetView* oldTargets[D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT]{}; ID3D11DepthStencilView* depth=nullptr;
                 context->OMGetRenderTargets(D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT,oldTargets,&depth);
                 context->OMSetRenderTargets(1,&target,nullptr); ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
