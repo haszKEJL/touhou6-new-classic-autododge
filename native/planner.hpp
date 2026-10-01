@@ -6,7 +6,7 @@
 #include <utility>
 
 struct Vec { float x{}, y{}; };
-struct Bullet { Vec p, v; float radius; };
+struct Bullet { Vec p, v; float radius; int age=-1; };
 struct Item { Vec p, v; int type; bool homing=false; };
 struct Enemy { Vec p, v, size; int life; bool boss, damageable, collidable; };
 inline bool redPower(int type) { return type == 0 || type == 2 || type == 4; }

@@ -71,7 +71,11 @@ struct Forecast {
     }
 };
 struct Decision { Direction direction{}; bool focus=false; int safeFrames=0; float margin=0; prediction::Path path{}; };
-struct OrbitLane { Vec center{}; float radius=90; };
+struct OrbitLane {
+    Vec center{}; float radius=90, direction=0;
+    bool timed=false;
+    std::array<Vec,horizon> waypoints{};
+};
 struct Step { int8_t x=0,y=0; bool focus=false; };
 struct Node {
     Vec p{};
@@ -116,8 +120,18 @@ inline Decision choose(Vec p,float fast,float slow,float radius,const Forecast& 
                 if(room<=0) { safe=false; break; }
                 node.margin=std::min(node.margin,room); ++node.survived;
                 node.cost+=2.f/(room+1.f);
-                node.cost+=.003f*std::hypot(next.x-target.x,next.y-target.y);
-                if(orbitLane) node.cost+=.035f*std::abs(std::hypot(next.x-orbitLane->center.x,next.y-orbitLane->center.y)-orbitLane->radius);
+                Vec waypoint=orbitLane && orbitLane->timed ? orbitLane->waypoints[f]:target;
+                node.cost+=(orbitLane && orbitLane->timed ? .025f:.003f)*std::hypot(next.x-waypoint.x,next.y-waypoint.y);
+                if(orbitLane) {
+                    Vec before=subtract(node.p,orbitLane->center),after=subtract(next,orbitLane->center);
+                    node.cost+=.035f*std::abs(std::hypot(after.x,after.y)-orbitLane->radius);
+                    if(orbitLane->direction && !orbitLane->timed) {
+                        float turn=std::remainder(std::atan2(after.y,after.x)-std::atan2(before.y,before.x),6.283185307f);
+                        // Soft preference for forward motion; collision checks
+                        // still reject every unsafe segment before scoring it.
+                        node.cost+=.08f*std::max(0.f,1.2f-orbitLane->direction*turn*orbitLane->radius);
+                    }
+                }
                 float edge=std::min({next.x-8,376-next.x,next.y-16,432-next.y});
                 node.cost+=.12f*std::max(0.f,14-edge);
                 node.p=next;
@@ -133,13 +147,23 @@ inline Decision choose(Vec p,float fast,float slow,float radius,const Forecast& 
             node.last=d; node.lastFocus=bool(focus);
             node.futurePenalty=0;
             for(int future=node.survived;future<horizon;future+=4) {
-                float room=forecast.clearance(node.p,node.p,future,radius+.8f);
+                Vec continued=node.p;
+                if(orbitLane && orbitLane->timed) continued=orbitLane->waypoints[future];
+                else if(orbitLane && orbitLane->direction) {
+                    Vec relative=subtract(node.p,orbitLane->center); float distance=std::hypot(relative.x,relative.y);
+                    float angle=std::atan2(relative.y,relative.x)+orbitLane->direction*(node.lastFocus ? slow:fast)*(future-node.survived)/std::max(distance,32.f);
+                    continued={orbitLane->center.x+distance*std::cos(angle),orbitLane->center.y+distance*std::sin(angle)};
+                }
+                float room=forecast.clearance(continued,continued,future,radius+.8f);
                 node.futurePenalty+=std::max(0.f,12-room)*4.f/float(future-node.survived+8);
             }
             candidates.push_back(node);
         }
         if(candidates.empty()) break;
-        auto rank=[&](const Node& n) { return n.cost+n.futurePenalty+.04f*std::hypot(n.p.x-target.x,n.p.y-target.y); };
+        auto rank=[&](const Node& n) {
+            Vec end=orbitLane && orbitLane->timed ? orbitLane->waypoints[std::min(horizon-1,n.survived-1)]:target;
+            return n.cost+n.futurePenalty+.04f*std::hypot(n.p.x-end.x,n.p.y-end.y);
+        };
         std::stable_sort(candidates.begin(),candidates.end(),[&](const Node& a,const Node& b){return rank(a)<rank(b);});
         beam.clear();
         // Keep spatial alternatives instead of filling the beam with nearly

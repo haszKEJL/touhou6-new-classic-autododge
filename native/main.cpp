@@ -22,6 +22,8 @@
 #include "navigation.hpp"
 #include "extra.hpp"
 #include "extra_tests.hpp"
+#include "maze_tests.hpp"
+#include "maze_corridor_tests.hpp"
 #include "controls.hpp"
 
 using Clock = std::chrono::steady_clock;
@@ -226,7 +228,8 @@ State sample(const Game& game, bool focus) {
         if (!finite(pos) || !finite(v) || !finite(size) || size.x <= 0 || size.y <= 0 ||
             size.x > 128 || size.y > 128 || std::abs(v.x)>100 || std::abs(v.y)>100)
             throw std::runtime_error("Invalid bullet values; input stopped.");
-        state.bullets.push_back({pos,v,std::min(size.x,size.y)*.5f});
+        auto age=field<uint32_t>(b,game.layout.bulletAge);
+        state.bullets.push_back({pos,v,std::min(size.x,size.y)*.5f,age<=1000000 ? int(age):-1});
     }
     data.resize(game.layout.laserStride*game.layout.laserCount);
     game.read(game.layout.lasers,data.data(),data.size());
@@ -584,6 +587,8 @@ int selfTest() {
     WritePrivateProfileStringW(L"UI",L"Language",L"99",preferences.config.c_str()); controls::readPreferences();
     require(preferences.language==i18n::Language::English,"Invalid language falls back to English");
     extraTests(require);
+    mazeTests(require);
+    mazeCorridorTests(require);
     std::cout << tests << " planner / behavior / toggle tests passed.\n"; return 0;
 }
 
@@ -716,7 +721,7 @@ int assistMain(int argc,char** argv) {
                     << ' ' << e.boss << ' ' << e.collidable << ' ' << e.damageable << ' ' << e.size.x << ' ' << e.size.y
                     << ' ' << e.v.x << ' ' << e.v.y << '\n';
                 for(const auto& b:s.bullets)
-                    std::cout << "B " << b.p.x << ' ' << b.p.y << ' ' << b.v.x << ' ' << b.v.y << ' ' << b.radius << '\n';
+                    std::cout << "B " << b.p.x << ' ' << b.p.y << ' ' << b.v.x << ' ' << b.v.y << ' ' << b.radius << ' ' << b.age << '\n';
                 std::cout << "S " << s.fast << ' ' << s.slow << ' ' << s.radius << ' ' << s.power << ' ' << s.bombActive
                     << ' ' << s.active << ' ' << s.dialogue << ' ' << s.spellKey << '\n';
                 std::cout << std::flush;

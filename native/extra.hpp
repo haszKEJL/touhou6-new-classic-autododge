@@ -1,5 +1,6 @@
 #pragma once
 #include "navigation.hpp"
+#include "maze_corridor.hpp"
 #include <string_view>
 
 enum class ExtraCard { None, Selene, Flare, Stone, Cranberry, Laevateinn, Four,
@@ -39,8 +40,13 @@ struct ExtraStrategy {
     float mazeGap=1.570796327f;
     bool mazeEmitting=false,mazePause=false;
     uint32_t mazeLastEmission=0;
+    MazeCorridor mazeCorridor;
+    std::optional<navigation::OrbitLane> mazeRoute;
+    bool mazeGateMode=false;
     std::optional<navigation::OrbitLane> orbitLane() const {
-        if(card==ExtraCard::Maze && bossKnown && boss.y>180) return navigation::OrbitLane{boss,90};
+        if(mazeRoute) return mazeRoute;
+        if(mazeGateMode) return std::nullopt;
+        if(card==ExtraCard::Maze && bossKnown && boss.y>180) return navigation::OrbitLane{boss,90,mazePause ? 0.f:(phase==0 ? -1.f:1.f)};
         return std::nullopt;
     }
     const ExtraProfile* profile=nullptr;
@@ -122,10 +128,26 @@ struct ExtraStrategy {
             // Flandre enters from the top, then teleports into the center.
             // Do not orbit that temporary entry position.
             if(boss.y<180) { target={192,330}; break; }
+            mazeCorridor.observe(boss,bullets);
+            if(!mazeCorridor.gates.empty()) mazeGateMode=true;
+            for(const auto& b:bullets) if(b.radius<2.5f && b.age>=0) mazeGateMode=true;
+            mazeRoute=mazeCorridor.route(boss,p);
+            if(mazeRoute) {
+                if(mazeRoute->direction) phase=mazeRoute->direction<0 ? 0:1;
+                target=mazeRoute->waypoints[12];
+                break;
+            }
+            if(mazeGateMode) {
+                // The opening starts below Flandre. When the blue stream ends,
+                // return there for the red opening rather than extrapolating
+                // the last orbit through the emission pause.
+                target={boss.x,boss.y+90};
+                break;
+            }
             bool emission=false;
             for(const auto& b:bullets) if(std::hypot(b.p.x-boss.x,b.p.y-boss.y)<38) { emission=true; break; }
             if(emission) {
-                if(mazePause) { phase=1-phase; mazePause=false; }
+                if(mazePause) { phase=1-phase; mazePause=false; mazeGapKnown=false; }
                 mazeEmitting=true; mazeLastEmission=frame;
             } else if(mazeEmitting && frame-mazeLastEmission>18) mazePause=true;
             float angle=std::atan2(p.y-boss.y,p.x-boss.x);
@@ -152,24 +174,41 @@ struct ExtraStrategy {
                 ++count;
             }
             if(!mazeGapKnown) {mazeGap=angle; mazeGapKnown=true;}
+            float halfGap=0;
             if(count>0) {
+                int widest=0;
+                for(int i=0;i<sectors;++i) if(!blocked[i] && blocked[(i+sectors-1)%sectors]) {
+                    int length=0; while(length<sectors && !blocked[(i+length)%sectors]) ++length;
+                    widest=std::max(widest,length);
+                }
                 float best=-1e9f,selectedAngle=mazeGap;
                 for(int i=0;i<sectors;++i) if(!blocked[i] && blocked[(i+sectors-1)%sectors]) {
                     int length=0;
                     while(length<sectors && !blocked[(i+length)%sectors]) ++length;
+                    // Follow the large C-shaped opening rather than chasing
+                    // incidental pinholes between neighboring bullets.
+                    if(widest>=12 && length<.65f*widest) continue;
                     float middle=(i+(length-1)*.5f)*tau/sectors;
                     float difference=std::remainder(middle-mazeGap,tau);
                     float fromPlayer=std::remainder(middle-angle,tau);
                     float direction=phase==0 ? -1.f:1.f;
                     float score=length*tau/sectors-2*std::abs(difference)-4*std::max(0.f,-fromPlayer*direction);
-                    if(score>best) {best=score; selectedAngle=mazeGap+difference;}
+                    if(score>best) {best=score; selectedAngle=mazeGap+difference; halfGap=(length-1)*.5f*tau/sectors;}
                 }
                 // Follow the observed corridor, including its reversal, rather
                 // than switching after a guessed number of player revolutions.
                 float delta=std::clamp(selectedAngle-mazeGap,-.06f,.06f);
                 if(newFrame) mazeGap+=delta;
             }
-            target={boss.x+radius*std::cos(mazeGap),boss.y+radius*std::sin(mazeGap)};
+            // Aim ahead on the arc, constrained by the observed main opening.
+            // Missing ring samples must not freeze the goal at an old point.
+            float nextAngle=angle+sign*.4f;
+            if(halfGap>.18f) {
+                float offset=std::remainder(angle-mazeGap,tau);
+                nextAngle=mazeGap+std::clamp(offset+sign*.4f,-halfGap+.12f,halfGap-.12f);
+            }
+            if(mazePause) nextAngle=1.570796327f;
+            target={boss.x+radius*std::cos(nextAngle),boss.y+radius*std::sin(nextAngle)};
             break;
         }
         case ExtraCard::Starbow: {

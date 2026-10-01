@@ -35,6 +35,8 @@ Version 1.5.0 was tested with Steam build 25306795, SHA-256 `48630a42a2eb6762d0d
 
 Extra-stage routes are experimental. The bot can still get hit, miss items or use bombs too late; it does not guarantee a clear.
 
+Maze of Love identifies openings between the spiral's bullet fans and estimates when each opening will reach the player's orbit. The route search follows those timed waypoints while checking bullets, lasers and the boss's body. It returns below Flandre during the blue-to-red pause and follows later reversals as the openings reach the player. Version 1.6.1 was checked against three recorded attempts and a live Spell Practice clear without a death on the Steam build above.
+
 ## Build
 
 Requires Windows x64 and a C++20 compiler. Dependencies are included in `vendor/` with their licenses: Dear ImGui 1.91.9b and MinHook 1.3.4.

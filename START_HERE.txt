@@ -1,4 +1,4 @@
-Scarlet Assist 1.6.0
+Scarlet Assist 1.6.1
 Author: haszKEJL
 
 1. Extract the full ZIP.
