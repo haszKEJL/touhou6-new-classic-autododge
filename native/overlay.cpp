@@ -99,11 +99,11 @@ void draw() {
     std::lock_guard lock(controls::state.mutex); auto& state=controls::state;
     const auto& text=i18n::get(state.language);
     auto* viewport=ImGui::GetMainViewport();
-    const float scale=std::clamp(std::min((viewport->Size.x-24.f)/760.f,(viewport->Size.y-24.f)/716.f),.4f,1.f);
+    const float scale=std::clamp(std::min((viewport->Size.x-24.f)/760.f,(viewport->Size.y-24.f)/772.f),.4f,1.f);
     static const ImGuiStyle baseStyle=ImGui::GetStyle(); ImGui::GetStyle()=baseStyle; ImGui::GetStyle().ScaleAllSizes(scale);
     ImGui::GetIO().FontGlobalScale=scale;
     ImGui::SetNextWindowPos(viewport->GetCenter(),ImGuiCond_FirstUseEver,{.5f,.5f});
-    ImGui::SetNextWindowSize({760*scale,716*scale},ImGuiCond_Always);
+    ImGui::SetNextWindowSize({760*scale,772*scale},ImGuiCond_Always);
     if(ImGui::Begin("Scarlet Assist",nullptr,ImGuiWindowFlags_NoTitleBar|ImGuiWindowFlags_NoResize|ImGuiWindowFlags_NoCollapse)) {
         ImGui::TextColored({.76f,.59f,1,1},"S C A R L E T   /   A S S I S T");
         ImGui::SameLine(590*scale); if(ImGui::SmallButton(text.hide)) state.menu=false;
@@ -115,7 +115,7 @@ void draw() {
         ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
         for(int i=0;i<4;++i) {
             auto& b=state.bindings[i]; ImGui::PushID(i);
-            ImGui::BeginChild("card",{0,85*scale},ImGuiChildFlags_None,ImGuiWindowFlags_NoScrollbar);
+            ImGui::BeginChild("card",{0,(i==3 ? 141:85)*scale},ImGuiChildFlags_None,ImGuiWindowFlags_NoScrollbar);
             ImGui::SetCursorPos({16*scale,12*scale}); ImGui::TextUnformatted(text.names[i]);
             ImGui::SetCursorPos({16*scale,43*scale}); ImGui::TextDisabled("%s",text.descriptions[i]);
             ImGui::SetCursorPos({370*scale,10*scale});
@@ -128,6 +128,11 @@ void draw() {
             if(ImGui::Combo("##mode",&mode,modes,2)) { b.hold=mode==1; b.enabled=false; b.blocked=state.held(b.key); controls::save(); }
             ImGui::SameLine(); auto label=state.capture==i ? text.capture:keyName(b.key);
             if(ImGui::Button(label.c_str(),{158*scale,0})) state.capture=state.capture==i ? -1:i;
+            if(i==3) {
+                ImGui::SetCursorPos({16*scale,80*scale});
+                if(ImGui::Checkbox(text.scoreMode,&state.scoreMode)) controls::save();
+                ImGui::SetCursorPos({16*scale,116*scale}); ImGui::TextDisabled("%s",text.scoreModeHelp);
+            }
             ImGui::EndChild(); ImGui::PopID();
         }
         if(state.capture>=0) ImGui::TextColored({.76f,.59f,1,1},"%s",text.captureHelp);

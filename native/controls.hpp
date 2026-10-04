@@ -29,6 +29,7 @@ struct Shared {
     int bullets=0, lasers=0, power=0, bombs=0;
     bool playing=false, ready=false;
     bool showPrediction=false;
+    bool scoreMode=false;
     prediction::Path prediction;
     ULONGLONG predictionTime=0;
     std::filesystem::path config;
@@ -44,6 +45,7 @@ inline Shared state;
 inline void save() {
     state.saveFailed=!WritePrivateProfileStringW(L"UI",L"Language",std::to_wstring(int(state.language)).c_str(),state.config.c_str());
     if(!WritePrivateProfileStringW(L"UI",L"Prediction",state.showPrediction ? L"1":L"0",state.config.c_str())) state.saveFailed=true;
+    if(!WritePrivateProfileStringW(L"Feature3",L"ScoreMode",state.scoreMode ? L"1":L"0",state.config.c_str())) state.saveFailed=true;
     for(int i=0;i<4;++i) {
         auto section=L"Feature"+std::to_wstring(i);
         if(!WritePrivateProfileStringW(section.c_str(),L"Key",std::to_wstring(state.bindings[i].key).c_str(),state.config.c_str())) state.saveFailed=true;
@@ -53,6 +55,7 @@ inline void save() {
 inline void readPreferences() {
     state.language=i18n::valid(int(GetPrivateProfileIntW(L"UI",L"Language",0,state.config.c_str())));
     state.showPrediction=GetPrivateProfileIntW(L"UI",L"Prediction",0,state.config.c_str())==1;
+    state.scoreMode=GetPrivateProfileIntW(L"Feature3",L"ScoreMode",0,state.config.c_str())==1;
     for(int i=0;i<4;++i) {
         auto section=L"Feature"+std::to_wstring(i); auto& b=state.bindings[i];
         int key=int(GetPrivateProfileIntW(section.c_str(),L"Key",b.key,state.config.c_str()));

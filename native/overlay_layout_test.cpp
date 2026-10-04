@@ -28,6 +28,7 @@ int main() {
         for(auto description:text.descriptions) good=good && ImGui::CalcTextSize(description).x<340*scale;
         good=good && ImGui::CalcTextSize(text.capture).x<=134*scale;
         good=good && ImGui::CalcTextSize(text.predictionHelp).x<=710*scale;
+        good=good && ImGui::CalcTextSize(text.scoreModeHelp).x<=680*scale;
     }
     io.FontGlobalScale=1; io.DisplaySize={1920,1080};
     auto& state=controls::state; state.menu=false; state.ready=true; state.playing=true; state.showPrediction=true;

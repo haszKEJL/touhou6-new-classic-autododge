@@ -24,6 +24,7 @@
 #include "extra_tests.hpp"
 #include "maze_tests.hpp"
 #include "maze_corridor_tests.hpp"
+#include "scoring_tests.hpp"
 #include "controls.hpp"
 
 using Clock = std::chrono::steady_clock;
@@ -574,21 +575,26 @@ int selfTest() {
     for(int language=0;language<3;++language) {
         preferences.language=i18n::valid(language);
         preferences.showPrediction=language!=1;
+        preferences.scoreMode=language!=1;
         preferences.bindings[0].key=VK_LSHIFT; preferences.bindings[0].hold=true; preferences.bindings[0].enabled=true;
         controls::save(); require(!preferences.saveFailed,"Save preferences to INI");
         preferences.language=i18n::Language::English; preferences.bindings[0].key=VK_F8; preferences.bindings[0].hold=false;
         preferences.showPrediction=!preferences.showPrediction;
+        preferences.scoreMode=!preferences.scoreMode;
         controls::readPreferences();
         require(int(preferences.language)==language,"Language persists across settings reload");
         require(preferences.bindings[0].key==VK_LSHIFT && preferences.bindings[0].hold,"Custom Shift hold binding persists");
         require(!preferences.bindings[0].enabled,"Reload never arms automation");
         require(preferences.showPrediction==(language!=1),"Prediction visibility persists across settings reload");
+        require(preferences.scoreMode==(language!=1) && !preferences.bindings[3].enabled,
+                "Score priority persists without enabling autoplay");
     }
     WritePrivateProfileStringW(L"UI",L"Language",L"99",preferences.config.c_str()); controls::readPreferences();
     require(preferences.language==i18n::Language::English,"Invalid language falls back to English");
     extraTests(require);
     mazeTests(require);
     mazeCorridorTests(require);
+    scoringTests(require);
     std::cout << tests << " planner / behavior / toggle tests passed.\n"; return 0;
 }
 
@@ -656,6 +662,7 @@ int assistMain(int argc,char** argv) {
         const auto start = Clock::now();
         auto report = start;
         Toggle dodge{false,down(VK_F8)}, collect{false,down(VK_F7)}, autoplay{false,down(VK_F5)}, autobomb{false,down(VK_F6)};
+        bool scoreMode=false;
         SweepControl sweep;
         SweepSurvival survival;
         ExtraStrategy extra;
@@ -680,7 +687,10 @@ int assistMain(int argc,char** argv) {
                 // Update each key, even if another toggle changed during this tick.
                 #ifdef TH_ASSIST_DLL
                 auto enabled=controls::tick(game.foreground());
-                bool changed=dodge.enabled!=enabled[0] || collect.enabled!=enabled[1] || autobomb.enabled!=enabled[2] || autoplay.enabled!=enabled[3];
+                bool requestedScore=false;
+                {std::lock_guard lock(controls::state.mutex);requestedScore=controls::state.scoreMode;}
+                bool changed=dodge.enabled!=enabled[0] || collect.enabled!=enabled[1] || autobomb.enabled!=enabled[2] || autoplay.enabled!=enabled[3] || scoreMode!=requestedScore;
+                scoreMode=requestedScore;
                 dodge.enabled=enabled[0]; collect.enabled=enabled[1]; autobomb.enabled=enabled[2]; autoplay.enabled=enabled[3];
 #else
                 bool changed=dodge.update(down(VK_F8));
@@ -689,6 +699,7 @@ int assistMain(int argc,char** argv) {
                 changed=autobomb.update(down(VK_F6)) || changed;
 #endif
                 if(changed) {
+                    sweep.cancel();
                     plannedFrame=std::numeric_limits<uint32_t>::max();
                     keyboard->release(game.foreground());
                     if(!autoplay.enabled) keyboard->shoot(false,game.foreground());
@@ -722,6 +733,8 @@ int assistMain(int argc,char** argv) {
                     << ' ' << e.v.x << ' ' << e.v.y << '\n';
                 for(const auto& b:s.bullets)
                     std::cout << "B " << b.p.x << ' ' << b.p.y << ' ' << b.v.x << ' ' << b.v.y << ' ' << b.radius << ' ' << b.age << '\n';
+                for(const auto& item:s.items)
+                    std::cout << "I " << item.type << ' ' << item.p.x << ' ' << item.p.y << ' ' << item.v.x << ' ' << item.v.y << ' ' << item.homing << '\n';
                 std::cout << "S " << s.fast << ' ' << s.slow << ' ' << s.radius << ' ' << s.power << ' ' << s.bombActive
                     << ' ' << s.active << ' ' << s.dialogue << ' ' << s.spellKey << '\n';
                 std::cout << std::flush;
@@ -750,23 +763,24 @@ int assistMain(int argc,char** argv) {
                 double now=std::chrono::duration<double>(tick-start).count();
                 bool autoMove=autoplay.enabled && !s.dialogue;
                 if(!autoMove || !playing) {
-                    sweep.ascending=false; survival={}; plannedFrame=std::numeric_limits<uint32_t>::max(); previousMove={};
+                    sweep.cancel(); survival={}; plannedFrame=std::numeric_limits<uint32_t>::max(); previousMove={};
                     // Pausing must not reset a card's route to its opening.
                     if(!autoMove || s.scene!=2) extra.reset();
                 }
                 if(playing && (dodge.enabled || collect.enabled || autoMove)) {
                     auto user = keyboard->user();
-                    intent=intention(s.player,s.fast,s.items,s.enemies,user,collect.enabled,autoMove,s.power);
+                    intent=intention(s.player,s.fast,s.items,s.enemies,user,collect.enabled,autoMove,s.power,scoreMode);
                     auto escapeGoal=autoMove ? survival.update(s.player,s.lasers,s.simulationFrame):std::nullopt;
                     auto cardGoal=autoMove ? extra.update(s.spellKey,s.simulationFrame,s.player,s.bullets,s.lasers,s.enemies):std::nullopt;
                     if(cardGoal) {
-                        sweep.ascending=false;
+                        sweep.cancel();
                         intent={toward(s.player,*cardGoal,s.fast),Objective::Extra,*cardGoal};
                     } else if(escapeGoal) {
-                        sweep.ascending=false;
+                        sweep.cancel();
                         intent={toward(s.player,*escapeGoal,s.fast),Objective::Survive,*escapeGoal};
-                    } else if(autoMove && sweep.update(now,s.player,s.power,s.items,s.enemies,threats,s.lasers))
-                        intent={toward(s.player,{s.player.x,112},s.fast),Objective::Sweep,Vec{s.player.x,112}};
+                    } else if(autoMove && sweep.update(now,s.player,s.power,s.items,s.enemies,threats,s.lasers,scoreMode,
+                        keyboard->physicalFocus() ? s.slow:s.fast,s.radius))
+                        intent={toward(s.player,sweep.goal,s.fast),Objective::Sweep,sweep.goal};
                     focused=keyboard->physicalFocus() || (autoMove && preferFocus(s.player,threats,intent,s.lasers));
                     s.speed=focused ? s.slow:s.fast;
                     if(autoMove) {
@@ -812,6 +826,7 @@ int assistMain(int argc,char** argv) {
                 for(const auto& item:s.items) if(redPower(item.type)) ++redCount;
                 for(const auto& enemy:s.enemies) if(enemy.boss) bossLife+=enemy.life;
                 std::cout << "F8=" << dodge.enabled << " F7=" << collect.enabled << " F6=" << autobomb.enabled << " F5=" << autoplay.enabled
+                    << " scorePriority=" << scoreMode
                     << " objective=" << objectiveName(intent.objective) << " scene=" << s.scene << " active=" << s.active << " player=(" << s.player.x << ',' << s.player.y
                     << ") state=" << s.playerState << " speed=" << s.speed << " radius=" << s.radius
                     << " bullets=" << s.bullets.size() << " lasers=" << s.lasers.size() << " items=" << s.items.size() << " enemies=" << s.enemies.size()

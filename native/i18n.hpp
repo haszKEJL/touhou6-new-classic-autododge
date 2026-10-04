@@ -10,6 +10,7 @@ struct Text {
     const char *captureHelp, *holdHelp, *stopAll, *pausedHelp, *stats;
     const char *starting, *ready, *stopped, *error, *saveError;
     const char *prediction, *predictionHelp, *plannedRoute, *projectedMove;
+    const char *scoreMode, *scoreModeHelp;
 };
 inline constexpr std::array<Text,3> translations{{
     {"Hide [Ins]", "Language", "Author", "Version",
@@ -21,7 +22,8 @@ inline constexpr std::array<Text,3> translations{{
      "Disable all [F9]", "Insert: menu. Automation pauses while this panel is open.",
      "Power %d/128  |  Bombs %d  |  Bullets %d  |  Lasers %d",
      "Starting...", "Ready", "Engine stopped. Restart the game.", "Error", "Could not save settings.",
-     "Show planned movement", "Cyan: predicted path. Ring: goal. Red: no safe route.", "Planned route", "Direction forecast"},
+     "Show planned movement", "Cyan: predicted path. Ring: goal. Red: no safe route.", "Planned route", "Direction forecast",
+     "Score priority", "Collects items higher up and uses auto-collect when safe."},
     {"Ukryj [Ins]", "Język", "Autor", "Wersja",
      {"Automatyczny unik", "Zbieranie przedmiotów", "Autobomba", "Autoplay"},
      {"Koryguje ruch przy zagrożeniu.", "Zbiera moc, bomby i dodatkowe życia.", "Używa bomby, gdy nie ma ucieczki.", "Unika, strzela, zbiera i używa bomb."},
@@ -31,7 +33,8 @@ inline constexpr std::array<Text,3> translations{{
      "Wyłącz wszystko [F9]", "Insert: menu. Otwarty panel wstrzymuje automatykę.",
      "Moc %d/128  |  Bomby %d  |  Pociski %d  |  Lasery %d",
      "Uruchamianie...", "Gotowy", "Silnik zatrzymany. Uruchom grę ponownie.", "Błąd", "Nie można zapisać ustawień.",
-     "Pokaż planowany ruch", "Turkus: trasa. Okrąg: cel. Czerwony: brak bezpiecznej trasy.", "Planowana trasa", "Prognoza kierunku"},
+     "Pokaż planowany ruch", "Turkus: trasa. Okrąg: cel. Czerwony: brak bezpiecznej trasy.", "Planowana trasa", "Prognoza kierunku",
+     "Priorytet wyniku", "Zbiera przedmioty wyżej i korzysta z autoprzyciągania, gdy jest bezpiecznie."},
     {"Скрыть [Ins]", "Язык", "Автор", "Версия",
      {"Автоуклонение", "Сбор предметов", "Автобомба", "Автоигра"},
      {"Уклоняется от приближающихся угроз.", "Собирает силу, бомбы и жизни.", "Использует бомбу, если выхода нет.", "Уклоняется, стреляет и собирает."},
@@ -41,7 +44,8 @@ inline constexpr std::array<Text,3> translations{{
      "Выключить всё [F9]", "Insert: меню. Пока панель открыта, автоматика на паузе.",
      "Сила %d/128  |  Бомбы %d  |  Пули %d  |  Лазеры %d",
      "Запуск...", "Готово", "Движок остановлен. Перезапустите игру.", "Ошибка", "Не удалось сохранить настройки.",
-     "Показывать план движения", "Бирюзовый: путь. Круг: цель. Красный: нет безопасного пути.", "Планируемый путь", "Прогноз направления"}
+     "Показывать план движения", "Бирюзовый: путь. Круг: цель. Красный: нет безопасного пути.", "Планируемый путь", "Прогноз направления",
+     "Приоритет счёта", "Собирает предметы выше и использует автосбор, когда безопасно."}
 }};
 inline const Text& get(Language language) { return translations[size_t(valid(int(language)))]; }
 }

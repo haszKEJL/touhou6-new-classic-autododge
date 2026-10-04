@@ -1,5 +1,6 @@
 #pragma once
 #include "planner.hpp"
+#include "scoring.hpp"
 #include <optional>
 
 struct Toggle {
@@ -42,7 +43,8 @@ inline const Enemy* attackTarget(Vec player,const std::vector<Enemy>& enemies) {
 }
 inline bool valuable(int type) { return type==3 || type==5; }
 inline std::optional<Vec> pickupTarget(Vec player,float speed,const std::vector<Item>& items,const Enemy* enemy,
-                                       bool autoplay=false,int power=128) {
+                                       bool autoplay=false,int power=128,bool scoreMode=false) {
+    if(autoplay && scoreMode) return scoring::pickup(player,speed,items,power);
     std::optional<Vec> best;
     float score=1e9f;
     for(const auto& item:items) {
@@ -73,11 +75,11 @@ inline std::optional<Vec> pickupTarget(Vec player,float speed,const std::vector<
     return best;
 }
 inline Intent intention(Vec player,float speed,const std::vector<Item>& items,const std::vector<Enemy>& enemies,
-                        Direction user,bool collect,bool autoplay,int power=128) {
+                        Direction user,bool collect,bool autoplay,int power=128,bool scoreMode=false) {
     // F7 assists collection when the user is not explicitly steering.
     if(!autoplay && (!collect || user!=Direction{})) return {user,Objective::Manual};
     const Enemy* enemy=autoplay ? attackTarget(player,enemies) : nullptr;
-    if(auto item=pickupTarget(player,speed,items,enemy,autoplay,power)) return {toward(player,*item,speed),Objective::Collect,*item};
+    if(auto item=pickupTarget(player,speed,items,enemy,autoplay,power,scoreMode)) return {toward(player,*item,speed),Objective::Collect,*item};
     if(enemy) {
         Vec target{std::clamp(enemy->p.x+enemy->v.x*4.f,12.f,372.f),
                    std::clamp(enemy->p.y+100.f,365.f,416.f)};
@@ -159,8 +161,17 @@ inline bool collectionCorridor(Vec p,const std::vector<Bullet>& threats,const st
 struct SweepControl {
     bool ascending=false;
     double ready=0;
+    Vec goal{};
+    scoring::Sweep score;
+    void cancel() {ascending=false;score.cancel();}
     bool update(double now,Vec p,int power,const std::vector<Item>& items,
-                const std::vector<Enemy>& enemies,const std::vector<Bullet>& threats,const std::vector<Laser>& lasers={}) {
+                const std::vector<Enemy>& enemies,const std::vector<Bullet>& threats,const std::vector<Laser>& lasers={},
+                bool scoreMode=false,float speed=4,float radius=1.25f) {
+        if(scoreMode) {
+            ascending=score.update(now,p,speed,radius,items,enemies,threats,lasers);
+            goal=score.goal;return ascending;
+        }
+        score.cancel();goal={p.x,112};
         int count=0,powerValue=0;
         bool rareHigh=false, rareLow=false;
         for(const auto& i:items) if(!i.homing && i.type!=6 && i.p.y<436) {

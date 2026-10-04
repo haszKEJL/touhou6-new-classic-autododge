@@ -6,6 +6,8 @@ Auto dodge adjusts movement around bullets and lasers. Autoplay adds shooting, i
 
 The in-game menu uses Dear ImGui with DirectX 11 and MinHook. Press **Insert** to open it. English, Polish and Russian are available; language and key bindings are saved between sessions.
 
+Enable **Score priority** in the Autoplay card to collect point items as well as power, bombs and lives. The bot looks for a clear route above the collection line and stays high while attracted point items arrive, so they retain their higher value. It rescues reachable low drops first and cancels top collection when danger appears. Shooting and spell routes remain active. The checkbox is off by default and saved between sessions.
+
 Enable **Show planned movement** in the menu to see autoplay's current route (up to 36 frames), its goal and the number of safe frames found. Cyan marks the route, a purple ring marks the goal, and red indicates no safe route was found. Auto dodge and collection show a shorter direction forecast. The preview is off by default, saved between sessions and hidden while automation is paused. Plans are recalculated during play, so the line can change as new threats appear.
 
 ## Download and run

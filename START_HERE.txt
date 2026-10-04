@@ -1,4 +1,4 @@
-Scarlet Assist 1.6.1
+Scarlet Assist 1.7.0
 Author: haszKEJL
 
 1. Extract the full ZIP.
@@ -12,6 +12,9 @@ Autobomb attempts X when no safe escape is predicted. The game handles bomb stoc
 For dodge on Shift: select Hold, assign Shift, enable Armed, close the panel.
 Show planned movement: optional route preview in the Insert menu, saved automatically.
 Cyan: route, purple ring: goal, red: no safe route. Autoplay predicts up to 36 frames.
+Score priority: optional checkbox in Autoplay. Collects points and other items,
+uses safe top collection, and stays high until attracted point items arrive.
+The preference is saved; enabling it does not start Autoplay by itself.
 The panel pauses automation, NOT the game. Pause a stage before editing settings.
 Restart the game after replacing the DLL.
 
